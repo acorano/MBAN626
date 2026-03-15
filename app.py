@@ -3,40 +3,36 @@ import plotly.express as px
 import requests
 import streamlit as st
 
-st.set_page_config(page_title="MBAN626 Retail Dashboard", layout="wide")
+st.set_page_config(page_title="Retail Sales Dashboard", layout="wide")
 
 st.title("Global Retail Sales Performance Dashboard")
-st.markdown("Interactive dashboard based on the Superstore dataset with live USD to PHP conversion.")
+st.write("Interactive dashboard for sales, profit, products, and live currency conversion.")
 
 @st.cache_data
 def load_data():
     df = pd.read_csv("Superstore.csv", encoding="latin1")
-
     df["Order Date"] = pd.to_datetime(df["Order Date"])
     df["Year"] = df["Order Date"].dt.year
     df["Month"] = df["Order Date"].dt.month
     df["MonthName"] = df["Order Date"].dt.month_name()
-
-    df.rename(columns={
+    df = df.rename(columns={
         "Sales": "sales",
         "Profit": "profit",
         "Quantity": "quantity"
-    }, inplace=True)
-
+    })
     return df
 
 df = load_data()
 
+# Sidebar filters
 st.sidebar.header("Filters")
 
 selected_region = st.sidebar.selectbox(
-    "Select Region",
-    ["All"] + sorted(df["Region"].dropna().unique().tolist())
+    "Region", ["All"] + sorted(df["Region"].dropna().unique().tolist())
 )
 
 selected_category = st.sidebar.selectbox(
-    "Select Category",
-    ["All"] + sorted(df["Category"].dropna().unique().tolist())
+    "Category", ["All"] + sorted(df["Category"].dropna().unique().tolist())
 )
 
 filtered_df = df.copy()
@@ -47,116 +43,82 @@ if selected_region != "All":
 if selected_category != "All":
     filtered_df = filtered_df[filtered_df["Category"] == selected_category]
 
-st.subheader("Live Currency Conversion")
-
+# Live exchange rate
 rate = None
-total_sales_usd = filtered_df["sales"].sum()
-total_sales_php = None
-
 try:
-    url = "https://open.er-api.com/v6/latest/USD"
-    response = requests.get(url, timeout=10)
+    response = requests.get("https://open.er-api.com/v6/latest/USD", timeout=10)
     data = response.json()
 
     if response.status_code == 200 and "rates" in data and "PHP" in data["rates"]:
         rate = data["rates"]["PHP"]
-        total_sales_php = total_sales_usd * rate
-    else:
-        st.warning("Could not retrieve exchange rate.")
 except Exception:
-    st.warning("API request failed.")
+    rate = None
 
-col1, col2, col3 = st.columns(3)
+total_sales = filtered_df["sales"].sum()
+total_profit = filtered_df["profit"].sum()
+total_quantity = filtered_df["quantity"].sum()
 
-col1.metric("Total Sales (USD)", f"${total_sales_usd:,.2f}")
+# KPI metrics
+col1, col2, col3, col4, col5 = st.columns(5)
+
+col1.metric("Total Sales (USD)", f"${total_sales:,.2f}")
+col2.metric("Total Profit (USD)", f"${total_profit:,.2f}")
+col3.metric("Total Quantity", f"{int(total_quantity):,}")
 
 if rate is not None:
-    col2.metric("USD to PHP Rate", f"{rate:,.4f}")
-    col3.metric("Total Sales (PHP)", f"₱{total_sales_php:,.2f}")
+    col4.metric("USD → PHP Rate", f"{rate:,.4f}")
+    col5.metric("Total Sales (PHP)", f"₱{total_sales * rate:,.2f}")
 else:
-    col2.metric("USD to PHP Rate", "Unavailable")
-    col3.metric("Total Sales (PHP)", "Unavailable")
+    col4.metric("USD → PHP Rate", "Unavailable")
+    col5.metric("Total Sales (PHP)", "Unavailable")
 
-if rate is not None:
-    currency_df = pd.DataFrame({
-        "Currency": ["USD", "PHP"],
-        "Total Sales": [total_sales_usd, total_sales_php]
-    })
-
-    fig_currency = px.bar(
-        currency_df,
-        x="Currency",
-        y="Total Sales",
-        text="Total Sales",
-        title="Live Currency Conversion of Total Sales"
-    )
-    fig_currency.update_traces(texttemplate='%{text:,.2f}', textposition='outside')
-    st.plotly_chart(fig_currency, use_container_width=True)
-
-st.subheader("Sales by Category by Region")
-
-category_region = (
-    filtered_df.groupby(["Region", "Category"])["sales"]
-    .sum()
-    .reset_index()
-)
+# Chart 1: Sales by Category
+sales_by_category = filtered_df.groupby("Category", as_index=False)["sales"].sum()
 
 fig1 = px.bar(
-    category_region,
+    sales_by_category,
     x="Category",
     y="sales",
     color="Category",
-    animation_frame="Region",
-    title="Sales (USD) by Category by Region",
-    labels={"sales": "Sales (USD)"}
+    title="Sales by Category (USD)"
 )
+
 st.plotly_chart(fig1, use_container_width=True)
 
-st.subheader("Profit by Region")
-
-region_profit = (
-    filtered_df.groupby("Region")["profit"]
-    .sum()
-    .reset_index()
-)
+# Chart 2: Profit by Region
+profit_by_region = filtered_df.groupby("Region", as_index=False)["profit"].sum()
 
 fig2 = px.bar(
-    region_profit,
+    profit_by_region,
     x="Region",
     y="profit",
     color="Region",
-    title="Profit (USD) by Region",
-    labels={"profit": "Profit (USD)"}
+    title="Profit by Region (USD)"
 )
+
 st.plotly_chart(fig2, use_container_width=True)
 
-st.subheader("Monthly Sales Trend")
-
-monthly_sales = (
-    filtered_df.groupby("Month")["sales"]
-    .sum()
-    .reset_index()
-)
+# Chart 3: Monthly Sales Trend
+monthly_sales = filtered_df.groupby("Month", as_index=False)["sales"].sum()
 
 fig3 = px.line(
     monthly_sales,
     x="Month",
     y="sales",
     markers=True,
-    title="Monthly Sales (USD) Trend",
-    labels={"sales": "Sales (USD)"}
+    title="Monthly Sales Trend (USD)"
 )
+
 fig3.update_layout(hovermode="x unified")
+
 st.plotly_chart(fig3, use_container_width=True)
 
-st.subheader("Top 10 Products by Sales")
-
+# Chart 4: Top 10 Products by Sales
 top_products = (
-    filtered_df.groupby("Product Name")["sales"]
+    filtered_df.groupby("Product Name", as_index=False)["sales"]
     .sum()
-    .sort_values(ascending=False)
+    .sort_values("sales", ascending=False)
     .head(10)
-    .reset_index()
 )
 
 fig4 = px.bar(
@@ -165,9 +127,10 @@ fig4 = px.bar(
     y="Product Name",
     orientation="h",
     text="sales",
-    title="Top 10 Products by Sales (USD)",
-    labels={"sales": "Sales (USD)", "Product Name": "Product Name"}
+    title="Top 10 Products by Sales (USD)"
 )
-fig4.update_traces(texttemplate='%{text:,.0f}', textposition='outside')
-fig4.update_layout(yaxis=dict(categoryorder='total ascending'))
+
+fig4.update_traces(texttemplate="%{text:,.0f}", textposition="outside")
+fig4.update_layout(yaxis=dict(categoryorder="total ascending"))
+
 st.plotly_chart(fig4, use_container_width=True)
